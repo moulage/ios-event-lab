@@ -132,11 +132,19 @@ class EventCoreTests(unittest.TestCase):
         self.assertEqual(result["device"], "[REDACTED]")
 
     def test_local_page_contains_styles_and_app_without_asset_requests(self):
-        page = server.local_page().decode("utf-8")
+        with patch.object(server, "list_devices", return_value={"devices": []}):
+            page = server.local_page().decode("utf-8")
         self.assertIn(".workspace{", page)
         self.assertIn("window.iosEventAppLoaded = true", page)
         self.assertNotIn('href="/style.css"', page)
         self.assertNotIn('src="/app.js"', page)
+
+    def test_local_page_shows_detected_device_before_script_runs(self):
+        devices = {"devices": [{"id": "device-12345678", "name": "Test <iPhone>"}]}
+        with patch.object(server, "list_devices", return_value=devices):
+            page = server.local_page().decode("utf-8")
+        self.assertIn('id="connectionBadge" class="badge live">1 台设备', page)
+        self.assertIn('value="device-12345678">Test &lt;iPhone&gt; · 12345678', page)
 
     def test_json_request_works_through_preview_origin(self):
         payload = json.dumps({"udid": "test-device"}).encode()

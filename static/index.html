@@ -10,14 +10,14 @@
   <div class="app-shell">
     <header class="topbar">
       <div class="brand"><span class="brand-mark">E</span><div><strong>iOS 埋点测试</strong><small>本机工作台 · local-test</small></div></div>
-      <div class="top-actions"><span id="connectionBadge" class="badge neutral">未连接</span><button id="refreshDevices" class="subtle" type="button">刷新设备</button></div>
+      <div class="top-actions"><span id="connectionBadge" class="badge <!-- IOS_EVENT_DEVICE_CLASS -->"><!-- IOS_EVENT_DEVICE_STATUS --></span><button id="refreshDevices" class="subtle" type="button">刷新设备</button></div>
     </header>
 
     <main>
       <section class="capture-band" aria-label="采集控制">
         <div class="section-title"><div><span class="eyebrow">DATA CAPTURE</span><h1>实时采集</h1></div><p>USB 调试日志 · 本机保存</p></div>
         <div class="capture-controls">
-          <label class="field device-field"><span>测试设备</span><select id="deviceSelect"><option value="">正在查找设备…</option></select></label>
+          <label class="field device-field"><span>测试设备</span><select id="deviceSelect"><!-- IOS_EVENT_DEVICE_OPTIONS --></select></label>
           <label class="field session-field"><span>会话名称</span><input id="sessionName" placeholder="例如：首页曝光验证" maxlength="80"></label>
           <button id="startBtn" class="primary" type="button">开始采集</button>
           <button id="stopBtn" class="danger" type="button" hidden>停止采集</button>
@@ -26,6 +26,7 @@
         </div>
         <div id="bridgePanel" class="bridge-panel"><span>网页版连接码</span><input id="bridgeCode" aria-label="网页版连接码" readonly><button id="copyBridgeCode" class="secondary" type="button">复制连接码</button><a href="https://moulage.github.io/ios-event-lab/" target="_blank" rel="noopener noreferrer">打开网页版</a></div>
         <div id="notice" class="notice" role="status" hidden></div>
+        <noscript><div class="notice error">浏览器未启用 JavaScript，无法开始采集。请允许此页面运行 JavaScript。</div></noscript>
       </section>
 
       <section class="workspace">

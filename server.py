@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import html
 import hmac
 import io
 import json
@@ -167,8 +168,21 @@ def local_page() -> bytes:
     script = (static / "app.js").read_text(encoding="utf-8")
     if "</style" in styles.lower() or "</script" in script.lower():
         raise ValueError("静态资源包含无法内联的结束标签")
-    return page.replace("<!-- IOS_EVENT_STYLES -->", f"<style>{styles}</style>").replace(
-        "<!-- IOS_EVENT_APP -->", f"<script>{script}</script>").encode("utf-8")
+    try:
+        device_data = list_devices()
+    except (subprocess.SubprocessError, OSError) as exc:
+        device_data = {"devices": [], "error": str(exc)}
+    devices = device_data["devices"]
+    options = "".join(
+        f'<option value="{html.escape(device["id"], quote=True)}">'
+        f'{html.escape(device["name"])} · {html.escape(device["id"][-8:])}</option>'
+        for device in devices
+    ) or f'<option value="">{html.escape(device_data.get("error") or "未发现 USB 真机")}</option>'
+    return (page.replace("<!-- IOS_EVENT_STYLES -->", f"<style>{styles}</style>")
+            .replace("<!-- IOS_EVENT_DEVICE_CLASS -->", "live" if devices else "neutral")
+            .replace("<!-- IOS_EVENT_DEVICE_STATUS -->", f"{len(devices)} 台设备" if devices else "未连接")
+            .replace("<!-- IOS_EVENT_DEVICE_OPTIONS -->", options)
+            .replace("<!-- IOS_EVENT_APP -->", f"<script>{script}</script>").encode("utf-8"))
 
 
 def list_rules() -> list[dict]:
