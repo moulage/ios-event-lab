@@ -85,6 +85,7 @@ async function refreshSessions() {
   $('deviceSelect').disabled = capture.running || capture.passive;
   $('startBtn').disabled = !capture.running && !$('deviceSelect').value;
   $('clearLogs').disabled = capture.running || capture.passive || !data.sessions.length;
+  $('bridgePanel').hidden = capture.passive;
   if (capture.running) {
     $('connectionBadge').textContent = capture.passive ? '其他端口采集中' : '正在采集';
     $('connectionBadge').className = 'badge live';
@@ -195,6 +196,11 @@ document.querySelectorAll('.tab').forEach((button) => button.addEventListener('c
   for (const name of ['events', 'rules', 'analysis']) $(`${name}View`).hidden = name !== state.tab;
 }));
 $('refreshDevices').addEventListener('click', refreshDevices);
+api('/api/bridge/code').then((data) => { $('bridgeCode').value = data.code; }).catch((error) => message(error.message, true));
+$('copyBridgeCode').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('bridgeCode').value); message('连接码已复制，请粘贴到网页版。'); }
+  catch (error) { message('复制失败，请手动选择连接码。', true); }
+});
 $('startBtn').addEventListener('click', async () => {
   try {
     message('');

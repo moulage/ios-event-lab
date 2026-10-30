@@ -6,7 +6,7 @@ const vm = require('node:vm');
 
 test('offline analyzer parses logs, filters events, and redacts sensitive values', () => {
   const source = fs.readFileSync(path.join(__dirname, '../site/app.js'), 'utf8');
-  const setup = source.slice(0, source.indexOf("$('importBtn').addEventListener"));
+  const setup = source.slice(0, source.indexOf("$('modeLive').addEventListener"));
   const elements = new Map();
   const context = vm.createContext({
     document: {getElementById: (id) => {
@@ -28,7 +28,7 @@ test('offline analyzer parses logs, filters events, and redacts sensitive values
   assert.equal(jsonl.rows[0].event, 'click');
   assert.equal(jsonl.rows[0].properties.op, '1');
   context.rows = normalized.rows;
-  vm.runInContext("state.sessions = [{id: 1, name: 'sample', rows}]; state.current = 1", context);
+  vm.runInContext("state.mode = 'offline'; state.sessions = [{id: 1, name: 'sample', rows}]; state.current = 1", context);
   elements.get('eventInput')?.value || elements.set('eventInput', {value: ''});
   elements.set('searchInput', {value: ''});
   elements.set('kindSelect', {value: 'events'});
@@ -38,4 +38,33 @@ test('offline analyzer parses logs, filters events, and redacts sensitive values
   elements.set('eventInput', {value: 'finish_sing'});
   assert.equal(vm.runInContext('filteredRows().length', context), 0);
   assert.equal(vm.runInContext("redact('token: abc userid: 123')", context), 'token: [REDACTED] userid: [REDACTED]');
+});
+
+test('online bridge sends the code in a header and queries server-side event filters', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '../site/app.js'), 'utf8');
+  const setup = source.slice(0, source.indexOf("$('modeLive').addEventListener"));
+  const values = new Map([
+    ['eventInput', 'open/close'], ['searchInput', 'keyword'], ['kindSelect', 'events'],
+  ]);
+  const requests = [];
+  const context = vm.createContext({
+    document: {getElementById: (id) => ({value: values.get(id) || ''})},
+    URLSearchParams, Date, Map, Set,
+    fetch: async (url, options) => {
+      requests.push({url, options});
+      return {ok: true, json: async () => url.includes('/analysis?')
+        ? {summary: {by_event: [['open', 1]], trend: []}}
+        : {rows: [{id: 3, event: 'open', properties: {}, line: '[REDACTED]', occurred_at: '2026-10-30T10:00:00'}], total: 1}};
+    },
+  });
+  vm.runInContext(setup, context);
+  vm.runInContext("state.token = 'secret-code'; state.sessions = [{id: 2, rows: [], event_count: 1}]; state.current = 2; render = () => {}", context);
+  await vm.runInContext('refreshLiveLogs()', context);
+  assert.match(requests[0].url, /event=open%2Fclose/);
+  assert.match(requests[0].url, /search=keyword/);
+  assert.ok(!requests[0].url.includes('secret-code'));
+  assert.equal(requests[0].options.headers['X-Bridge-Token'], 'secret-code');
+  assert.equal(requests[0].options.targetAddressSpace, 'loopback');
+  assert.equal(vm.runInContext('state.sessions[0].rows[0].event', context), 'open');
+  assert.equal(vm.runInContext('filteredRows().length', context), 1);
 });

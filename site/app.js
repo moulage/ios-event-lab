@@ -1,5 +1,8 @@
 const $ = (id) => document.getElementById(id);
-const state = {sessions: [], current: 0, selected: 0, order: 'desc', visible: []};
+const state = {sessions: [], offlineSessions: [], liveSessions: [], current: 0, offlineCurrent: 0, liveCurrent: 0,
+  selected: 0, order: 'desc', visible: [], mode: 'live', connected: false, token: '', bridgeRunning: false,
+  bridgePassive: false, liveRequest: 0};
+const bridgeBase = 'http://127.0.0.1:8766';
 const marker = 'sensor statitic -- event:';
 const fieldPattern = /,\s+([A-Za-z_$][\w$.-]*):\s*/g;
 const sensitiveName = /token|secret|password|passwd|authorization|userid|user_id|idfa|idfv|smdeviceid|device_id|cid|uuid/i;
@@ -61,15 +64,18 @@ function normalizeRows(text, filename) {
 
 function renderSessions() {
   $('sessionCount').textContent = state.sessions.length;
-  $('clearLogs').disabled = !state.sessions.length;
+  $('clearLogs').disabled = !state.offlineSessions.length;
   const list = $('sessionList');
   list.innerHTML = state.sessions.length ? state.sessions.map((session) =>
-    `<button class="session-item ${session.id === state.current ? 'active' : ''}" data-id="${session.id}" type="button"><strong>${escapeHtml(session.name)}</strong><small>导入 · ${session.rows.filter((row) => row.event).length} 事件</small></button>`
+    `<button class="session-item ${session.id === state.current ? 'active' : ''}" data-id="${session.id}" type="button"><strong>${escapeHtml(session.name)}</strong><small>${state.mode === 'live' ? session.source === 'usb' ? 'USB' : '导入' : '本次导入'} · ${session.event_count ?? session.rows.filter((row) => row.event).length} 事件</small></button>`
   ).join('') : '<div class="session-empty">暂无会话</div>';
   list.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
     state.current = Number(button.dataset.id);
+    if (state.mode === 'live') state.liveCurrent = state.current;
+    else state.offlineCurrent = state.current;
     state.selected = 0;
     render();
+    if (state.mode === 'live' && state.connected) refreshLiveLogs().catch(bridgeError);
   }));
 }
 
@@ -111,6 +117,7 @@ function renderDetail() {
 function filteredRows() {
   const session = current();
   if (!session) return [];
+  if (state.mode === 'live') return session.rows;
   const events = terms($('eventInput').value);
   const keyword = $('searchInput').value.trim().toLocaleLowerCase();
   const kind = $('kindSelect').value;
@@ -124,9 +131,11 @@ function filteredRows() {
 function renderRows() {
   const rows = filteredRows();
   state.visible = rows.slice(0, 500);
-  $('resultCount').textContent = `${rows.length} 条${rows.length > 500 ? ` · ${state.order === 'asc' ? '最早' : '最新'} 500 条` : ''}`;
+  const total = state.mode === 'live' ? current()?.total ?? rows.length : rows.length;
+  $('resultCount').textContent = `${total} 条${total > 500 ? ` · ${state.order === 'asc' ? '最早' : '最新'} 500 条` : ''}`;
   if (!state.visible.some((row) => row.id === state.selected)) state.selected = state.visible[0]?.id || 0;
   $('eventEmpty').hidden = state.visible.length > 0;
+  $('eventEmpty').textContent = state.mode === 'live' ? '连接本机并开始采集后，事件会显示在这里。' : '导入日志后，事件会显示在这里。';
   $('eventRows').innerHTML = state.visible.map((row) => {
     const preview = row.event ? Object.entries(row.properties).slice(0, 3).map(([key, value]) => `${key}: ${sensitiveName.test(key) ? '[REDACTED]' : redact(value)}`).join(' · ') : redact(row.line);
     return `<tr tabindex="0" data-id="${row.id}" class="${row.id === state.selected ? 'selected' : ''}"><td class="cell-time">${escapeHtml(String(row.occurred_at).slice(11, 19))}</td><td><span class="event-name">${escapeHtml(row.event || '运行日志')}</span><span class="event-preview">${escapeHtml(preview)}</span></td><td><span class="tag ${row.warning ? 'warn' : row.event ? '' : 'raw'}">${row.warning ? '需核对' : row.event ? '埋点' : '日志'}</span></td></tr>`;
@@ -155,9 +164,9 @@ function render() {
   renderSessions();
   const session = current();
   $('currentSession').textContent = session?.name || '尚未选择';
-  $('logCount').textContent = (session?.rows.length || 0).toLocaleString('zh-CN');
+  $('logCount').textContent = (session?.line_count ?? session?.rows.length ?? 0).toLocaleString('zh-CN');
   const events = session?.rows.filter((row) => row.event) || [];
-  $('eventCount').textContent = events.length.toLocaleString('zh-CN');
+  $('eventCount').textContent = (session?.event_count ?? events.length).toLocaleString('zh-CN');
   const byName = new Map();
   const byMinute = new Map();
   events.forEach((row) => {
@@ -165,10 +174,12 @@ function render() {
     const minute = String(row.occurred_at).slice(0, 16);
     byMinute.set(minute, (byMinute.get(minute) || 0) + 1);
   });
-  $('typeCount').textContent = byName.size;
-  $('eventOptions').replaceChildren(...[...byName.keys()].map((name) => new Option(name, name)));
-  renderBars('distribution', [...byName].sort((a, b) => b[1] - a[1]));
-  renderBars('trend', [...byMinute].sort((a, b) => a[0].localeCompare(b[0])));
+  const names = session?.summary ? new Map(session.summary.by_event) : byName;
+  const minutes = session?.summary ? new Map(session.summary.trend) : byMinute;
+  $('typeCount').textContent = names.size;
+  $('eventOptions').replaceChildren(...[...names.keys()].map((name) => new Option(name, name)));
+  renderBars('distribution', [...names].sort((a, b) => b[1] - a[1]));
+  renderBars('trend', [...minutes].sort((a, b) => a[0].localeCompare(b[0])));
   renderRows();
 }
 
@@ -215,6 +226,164 @@ function initResize(handleId, container, variable, key, direction, minimum, maxW
   });
 }
 
+async function bridgeApi(path, options = {}) {
+  const response = await fetch(`${bridgeBase}${path}`, {
+    ...options, mode: 'cors', cache: 'no-store', targetAddressSpace: 'loopback',
+    headers: {'X-Bridge-Token': state.token, ...(options.body ? {'Content-Type': 'application/json'} : {})},
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    const error = new Error(data.error || `本机服务返回 ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+function bridgeError(error) {
+  if (error.status === 400) { notice(error.message, true); return; }
+  state.connected = false;
+  state.bridgeRunning = false;
+  state.bridgePassive = false;
+  updateBridgeControls();
+  notice(`${error.message}。请确认本机服务运行，并允许浏览器访问本地网络。`, true);
+}
+
+function updateBridgeControls() {
+  $('connectBridge').hidden = state.connected;
+  $('disconnectBridge').hidden = !state.connected;
+  $('deviceControls').hidden = !state.connected;
+  $('bridgeStatus').textContent = state.connected ? state.bridgePassive ? '只读连接' : state.bridgeRunning ? '正在采集' : '本机已连接' : '未连接';
+  $('startCapture').hidden = state.bridgeRunning || state.bridgePassive;
+  $('stopCapture').hidden = !state.bridgeRunning || state.bridgePassive;
+  $('startCapture').disabled = !$('deviceSelect').value || state.bridgePassive;
+}
+
+async function refreshBridgeDevices() {
+  const data = await bridgeApi('/api/bridge/devices');
+  const select = $('deviceSelect');
+  const previous = select.value;
+  select.replaceChildren();
+  if (!data.devices.length) select.add(new Option('未发现 USB 真机', ''));
+  for (const device of data.devices) select.add(new Option(`${device.name} · ${device.id.slice(-8)}`, device.id));
+  if (data.devices.some((device) => device.id === previous)) select.value = previous;
+  $('startCapture').disabled = !select.value || state.bridgePassive;
+  if (data.error) notice(data.error, true);
+  return data.error;
+}
+
+async function refreshLiveLogs() {
+  const sessionId = state.current;
+  const session = current();
+  if (!sessionId || !session) { render(); return; }
+  const request = ++state.liveRequest;
+  const params = new URLSearchParams({session: sessionId, kind: $('kindSelect').value,
+    event: $('eventInput').value, search: $('searchInput').value, order: state.order});
+  const data = await bridgeApi(`/api/bridge/logs?${params}`);
+  if (request !== state.liveRequest || sessionId !== state.current || state.mode !== 'live') return;
+  session.rows = data.rows;
+  session.total = data.total;
+  if (!session.summary || session.summaryCount !== session.event_count) {
+    const analysis = await bridgeApi(`/api/bridge/analysis?session=${sessionId}`);
+    if (request !== state.liveRequest || sessionId !== state.current || state.mode !== 'live') return;
+    session.summary = analysis.summary;
+    session.summaryCount = session.event_count;
+  }
+  render();
+}
+
+async function refreshBridge() {
+  if (state.refreshing) return;
+  state.refreshing = true;
+  try {
+    const [capture, data] = await Promise.all([
+      bridgeApi('/api/bridge/status'), bridgeApi('/api/bridge/sessions'),
+    ]);
+    state.bridgeRunning = capture.running;
+    state.bridgePassive = capture.passive;
+    state.connected = true;
+    const previous = new Map(state.liveSessions.map((session) => [session.id, session]));
+    state.liveSessions = data.sessions.map((session) => ({rows: [], ...previous.get(session.id), ...session}));
+    if (!state.liveSessions.some((session) => session.id === state.liveCurrent))
+      state.liveCurrent = capture.session_id || state.liveSessions[0]?.id || 0;
+    if (state.mode === 'live') {
+      state.sessions = state.liveSessions;
+      state.current = state.liveCurrent;
+      updateBridgeControls();
+      render();
+      await refreshLiveLogs();
+    }
+  } finally { state.refreshing = false; }
+}
+
+function switchMode(mode) {
+  if (state.mode === mode) return;
+  if (state.mode === 'live') state.liveCurrent = state.current;
+  else state.offlineCurrent = state.current;
+  state.mode = mode;
+  state.sessions = mode === 'live' ? state.liveSessions : state.offlineSessions;
+  state.current = mode === 'live' ? state.liveCurrent : state.offlineCurrent;
+  state.selected = 0;
+  for (const id of ['eventInput', 'searchInput', 'fieldInput', 'valueInput']) $(id).value = '';
+  $('kindSelect').value = 'events';
+  $('liveControls').hidden = mode !== 'live';
+  $('offlineControls').hidden = mode !== 'offline';
+  for (const [id, value] of [['modeLive', 'live'], ['modeOffline', 'offline']]) {
+    $(id).classList.toggle('active', value === mode);
+    $(id).setAttribute('aria-pressed', String(value === mode));
+  }
+  notice('');
+  render();
+  if (mode === 'live' && state.connected) refreshBridge().catch(bridgeError);
+}
+
+$('modeLive').addEventListener('click', () => switchMode('live'));
+$('modeOffline').addEventListener('click', () => switchMode('offline'));
+$('connectBridge').addEventListener('click', async () => {
+  state.token = $('bridgeCode').value.trim();
+  if (!state.token) { notice('请先从本机工作台复制连接码。', true); return; }
+  $('connectBridge').disabled = true;
+  try {
+    await bridgeApi('/api/bridge/status');
+    await refreshBridge();
+    const deviceError = await refreshBridgeDevices();
+    if (!deviceError) notice('已连接本机采集服务。');
+  } catch (error) { bridgeError(error); }
+  finally { $('connectBridge').disabled = false; }
+});
+$('disconnectBridge').addEventListener('click', () => {
+  state.connected = false;
+  state.bridgePassive = false;
+  state.token = '';
+  $('bridgeCode').value = '';
+  state.liveSessions = [];
+  state.liveCurrent = 0;
+  state.sessions = [];
+  state.current = 0;
+  state.selected = 0;
+  updateBridgeControls();
+  render();
+  notice('已断开网页；本机采集不会因此停止。');
+});
+$('refreshBridgeDevices').addEventListener('click', () => refreshBridgeDevices().catch(bridgeError));
+$('deviceSelect').addEventListener('change', updateBridgeControls);
+$('startCapture').addEventListener('click', async () => {
+  try {
+    const data = await bridgeApi('/api/bridge/start', {method: 'POST', body: JSON.stringify({
+      udid: $('deviceSelect').value, name: $('liveSessionName').value.trim(),
+    })});
+    state.liveCurrent = data.session_id;
+    state.current = data.session_id;
+    await refreshBridge();
+    notice('采集已启动，请操作真机中的 debug 包。');
+  } catch (error) { notice(error.message, true); }
+});
+$('stopCapture').addEventListener('click', async () => {
+  try { await bridgeApi('/api/bridge/stop', {method: 'POST', body: '{}'}); await refreshBridge(); notice('采集已停止。'); }
+  catch (error) { bridgeError(error); }
+});
+setInterval(() => { if (state.mode === 'live' && state.connected) refreshBridge().catch(bridgeError); }, 2000);
+
 $('importBtn').addEventListener('click', () => $('importFile').click());
 $('importFile').addEventListener('change', async (event) => {
   for (const file of event.target.files) {
@@ -223,7 +392,9 @@ $('importFile').addEventListener('change', async (event) => {
       const parsed = normalizeRows(await file.text(), file.name);
       const session = {id: Date.now() + Math.random(), name: $('sessionName').value.trim() || parsed.name, rows: parsed.rows};
       state.sessions.unshift(session);
+      state.offlineSessions = state.sessions;
       state.current = session.id;
+      state.offlineCurrent = session.id;
       state.selected = 0;
       notice(`已导入 ${file.name}，${session.rows.length} 行。`);
     } catch (error) { notice(error.message, true); }
@@ -234,18 +405,26 @@ $('importFile').addEventListener('change', async (event) => {
 $('clearLogs').addEventListener('click', () => {
   if (!window.confirm('清空当前浏览器中的全部已导入日志？')) return;
   state.sessions = [];
+  state.offlineSessions = [];
   state.current = 0;
+  state.offlineCurrent = 0;
   state.selected = 0;
   render();
   notice('已清空当前浏览器中的日志。');
 });
-for (const id of ['eventInput', 'searchInput']) $(id).addEventListener('input', renderRows);
-$('kindSelect').addEventListener('change', renderRows);
+let filterTimer;
+function updateRows() {
+  if (state.mode !== 'live' || !state.connected) { renderRows(); return; }
+  clearTimeout(filterTimer);
+  filterTimer = setTimeout(() => refreshLiveLogs().catch(bridgeError), 200);
+}
+for (const id of ['eventInput', 'searchInput']) $(id).addEventListener('input', updateRows);
+$('kindSelect').addEventListener('change', updateRows);
 for (const id of ['fieldInput', 'valueInput']) $(id).addEventListener('input', renderDetail);
 $('resetFilters').addEventListener('click', () => {
   for (const id of ['eventInput', 'searchInput', 'fieldInput', 'valueInput']) $(id).value = '';
   $('kindSelect').value = 'events';
-  renderRows();
+  updateRows();
 });
 for (const [id, order] of [['sortNewest', 'desc'], ['sortOldest', 'asc']]) $(id).addEventListener('click', () => {
   state.order = order;
@@ -255,7 +434,7 @@ for (const [id, order] of [['sortNewest', 'desc'], ['sortOldest', 'asc']]) $(id)
     $(buttonId).setAttribute('aria-pressed', String(direction === order));
   }
   $('eventRows').closest('.event-table-wrap').scrollTop = 0;
-  renderRows();
+  updateRows();
 });
 document.querySelectorAll('.tab').forEach((button) => button.addEventListener('click', () => {
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab === button));

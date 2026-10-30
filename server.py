@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import csv
+import hmac
 import io
 import json
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import subprocess
@@ -23,6 +25,8 @@ ENVIRONMENT = "local-test"
 DATA = Path(os.environ.get("IOS_EVENT_LAB_DATA_DIR", ROOT / "data" / ENVIRONMENT))
 DB = DATA / "events.sqlite3"
 PASSIVE = os.environ.get("IOS_EVENT_LAB_PASSIVE") == "1"
+BRIDGE_ORIGIN = "https://moulage.github.io"
+BRIDGE_TOKEN = secrets.token_urlsafe(24)
 MAX_LINES = 100_000
 MAX_IMPORT_BYTES = 10 * 1024 * 1024
 MAX_BODY = MAX_IMPORT_BYTES + 4096
@@ -268,9 +272,47 @@ class Capture:
 capture = Capture()
 
 
+def list_devices() -> dict:
+    if not shutil.which("idevice_id"):
+        return {"devices": [], "error": "缺少 libimobiledevice"}
+    ids = subprocess.run(["idevice_id", "-l"], capture_output=True, text=True, timeout=8, check=True).stdout.splitlines()
+    devices = []
+    for value in ids:
+        try:
+            name = subprocess.run(["ideviceinfo", "-u", value, "-k", "DeviceName"],
+                                  capture_output=True, text=True, timeout=3, check=True).stdout.strip()
+        except (subprocess.SubprocessError, OSError):
+            name = "iPhone " + value[-6:]
+        devices.append({"id": value, "name": name or "iPhone " + value[-6:]})
+    return {"devices": devices, "environment": ENVIRONMENT}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
+
+    def end_headers(self):
+        if urlparse(self.path).path.startswith("/api/bridge/") and self.headers.get("Origin") == BRIDGE_ORIGIN:
+            self.send_header("Access-Control-Allow-Origin", BRIDGE_ORIGIN)
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Bridge-Token")
+            self.send_header("Vary", "Origin")
+        super().end_headers()
+
+    def allowed_request(self, *, bridge=False, code=False) -> bool:
+        port = self.server.server_address[1]
+        local_origins = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
+        if self.headers.get("Host") not in {f"127.0.0.1:{port}", f"localhost:{port}"}:
+            self.respond({"error": "仅允许从本机地址访问"}, 403)
+            return False
+        origin = self.headers.get("Origin")
+        if origin and origin not in (local_origins if code or not bridge else local_origins | {BRIDGE_ORIGIN}):
+            self.respond({"error": "不允许的网页来源"}, 403)
+            return False
+        if bridge and not code and not hmac.compare_digest(self.headers.get("X-Bridge-Token", ""), BRIDGE_TOKEN):
+            self.respond({"error": "连接码无效，请从本机工作台重新复制"}, 401)
+            return False
+        return True
 
     def respond(self, value, status=200):
         body = json.dumps(value, ensure_ascii=False).encode()
@@ -296,19 +338,37 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         query = {key: value[0] for key, value in parse_qs(url.query).items()}
         try:
+            bridge = url.path.startswith("/api/bridge/")
+            if not self.allowed_request(bridge=bridge, code=url.path == "/api/bridge/code"):
+                return
+            if url.path == "/api/bridge/code":
+                return self.respond({"code": BRIDGE_TOKEN, "environment": ENVIRONMENT})
+            if url.path == "/api/bridge/status":
+                return self.respond({**capture.state(), "environment": ENVIRONMENT})
+            if url.path == "/api/bridge/devices":
+                return self.respond(list_devices())
+            if url.path == "/api/bridge/sessions":
+                with connection() as db:
+                    rows = db.execute("SELECT * FROM sessions ORDER BY id DESC LIMIT 100").fetchall()
+                return self.respond({"sessions": [public_session(dict(row)) for row in rows]})
+            if url.path == "/api/bridge/logs":
+                session_id = int(query.get("session", "0"))
+                with connection() as db:
+                    session = db.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
+                if not session:
+                    return self.respond({"error": "会话不存在"}, 404)
+                rows, total = log_page(session_id, query)
+                return self.respond({"rows": [public_row(row) for row in rows], "total": total,
+                                     "session": public_session(dict(session))})
+            if url.path == "/api/bridge/analysis":
+                session_id = int(query.get("session", "0"))
+                with connection() as db:
+                    session = db.execute("SELECT id FROM sessions WHERE id=?", (session_id,)).fetchone()
+                if not session:
+                    return self.respond({"error": "会话不存在"}, 404)
+                return self.respond({"summary": summarize(load_rows(session_id, events_only=True))})
             if url.path == "/api/devices":
-                if not shutil.which("idevice_id"):
-                    return self.respond({"devices": [], "error": "缺少 libimobiledevice"})
-                ids = subprocess.run(["idevice_id", "-l"], capture_output=True, text=True, timeout=8, check=True).stdout.splitlines()
-                devices = []
-                for value in ids:
-                    try:
-                        name = subprocess.run(["ideviceinfo", "-u", value, "-k", "DeviceName"],
-                                              capture_output=True, text=True, timeout=3, check=True).stdout.strip()
-                    except (subprocess.SubprocessError, OSError):
-                        name = "iPhone " + value[-6:]
-                    devices.append({"id": value, "name": name or "iPhone " + value[-6:]})
-                return self.respond({"devices": devices, "environment": ENVIRONMENT})
+                return self.respond(list_devices())
             if url.path == "/api/capture":
                 return self.respond(capture.state())
             if url.path == "/api/sessions":
@@ -371,7 +431,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            bridge = self.path.startswith("/api/bridge/")
+            if not self.allowed_request(bridge=bridge):
+                return
             data = self.body()
+            if self.path == "/api/bridge/start":
+                return self.respond({"session_id": capture.start(str(data.get("udid", "")), str(data.get("name", "")))}, 201)
+            if self.path == "/api/bridge/stop":
+                return self.respond(capture.stop())
             if self.path == "/api/capture/start":
                 session_id = capture.start(str(data.get("udid", "")), str(data.get("name", "")))
                 return self.respond({"session_id": session_id}, 201)
@@ -410,6 +477,8 @@ class Handler(BaseHTTPRequestHandler):
             self.respond({"error": str(exc)}, 400)
 
     def do_DELETE(self):
+        if not self.allowed_request():
+            return
         if not self.path.startswith("/api/rules/"):
             return self.send_error(404)
         try:
@@ -419,6 +488,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond({"ok": True})
         except (ValueError, sqlite3.Error) as exc:
             self.respond({"error": str(exc)}, 400)
+
+    def do_OPTIONS(self):
+        if not self.path.startswith("/api/bridge/"):
+            return self.send_error(404)
+        port = self.server.server_address[1]
+        if self.headers.get("Host") not in {f"127.0.0.1:{port}", f"localhost:{port}"} or self.headers.get("Origin") != BRIDGE_ORIGIN:
+            return self.send_error(403)
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
 
 def main():

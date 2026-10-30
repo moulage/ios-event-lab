@@ -2,6 +2,14 @@
 .topbar .source-link:hover{text-decoration:underline}
 .capture-controls{align-items:end}
 .capture-controls .session-field{width:min(320px,100%)}
+.mode-control{display:inline-flex;margin-bottom:14px;border:1px solid #cad8d2;border-radius:5px;overflow:hidden;background:#fff}
+.mode-option{height:34px;border:0;background:#fff;padding:0 14px;color:#587069;font-size:12px;font-weight:600}
+.mode-option+.mode-option{border-left:1px solid #cad8d2}
+.mode-option.active{background:#dff0e8;color:#155e4c}
+.live-controls .capture-controls+.capture-controls{margin-top:12px}
+.bridge-field{width:min(320px,100%)}
+.bridge-field input{height:36px;border:1px solid #cad8d2;border-radius:5px;padding:0 10px;color:#263832;background:#fff}
+.bridge-status{align-self:center;color:#667771;font-size:12px}
 .event-table-wrap tbody tr:focus-visible{outline:2px solid #187c65;outline-offset:-2px}
 .event-table-wrap tbody tr{cursor:pointer}
-@media(max-width:650px){.topbar .source-link{font-size:11px}.capture-controls .session-field{width:100%}}
+@media(max-width:650px){.topbar .source-link{font-size:11px}.capture-controls .session-field,.bridge-field{width:100%}.bridge-status{width:100%}}

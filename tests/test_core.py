@@ -2,8 +2,12 @@ import io
 import json
 import sys
 import tempfile
+import threading
 import unittest
+import urllib.error
+import urllib.request
 from pathlib import Path
+from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -137,6 +141,62 @@ class EventCoreTests(unittest.TestCase):
         handler.headers["Content-Type"] = "text/plain"
         with self.assertRaises(ValueError):
             handler.body()
+
+    def test_bridge_requires_allowed_origin_and_code(self):
+        with tempfile.TemporaryDirectory(prefix="local-test-ios-bridge-") as path:
+            data = Path(path)
+            with patch.object(server, "DATA", data), patch.object(server, "DB", data / "events.sqlite3"), \
+                 patch.object(server, "BRIDGE_TOKEN", "test-only-bridge-code"):
+                server.init_db()
+                session_id = server.create_session("local-test bridge", "import")
+                server.append_line(session_id, "sensor statitic -- event: open, token: private-value", "import")
+                httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+                thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+                thread.start()
+                base = f"http://127.0.0.1:{httpd.server_address[1]}"
+
+                def request(path, *, origin=server.BRIDGE_ORIGIN, code="test-only-bridge-code", method="GET", body=None):
+                    headers = {"Origin": origin}
+                    if code:
+                        headers["X-Bridge-Token"] = code
+                    if body is not None:
+                        headers["Content-Type"] = "application/json"
+                    req = urllib.request.Request(base + path, data=json.dumps(body).encode() if body is not None else None,
+                                                 headers=headers, method=method)
+                    try:
+                        with urllib.request.urlopen(req, timeout=3) as response:
+                            return response.status, response.headers, response.read().decode()
+                    except urllib.error.HTTPError as error:
+                        return error.code, error.headers, error.read().decode()
+
+                try:
+                    status, headers, body = request("/api/bridge/logs?session=" + str(session_id))
+                    self.assertEqual(status, 200)
+                    self.assertEqual(headers["Access-Control-Allow-Origin"], server.BRIDGE_ORIGIN)
+                    self.assertNotIn("private-value", body)
+                    self.assertEqual(json.loads(body)["rows"][0]["properties"]["token"], "[REDACTED]")
+                    self.assertEqual(request("/api/bridge/status", code="wrong")[0], 401)
+                    self.assertEqual(request("/api/bridge/status", origin="https://evil.example")[0], 403)
+                    self.assertEqual(request("/api/bridge/code")[0], 403)
+                    self.assertEqual(request("/api/capture/start", body={"udid": "fake"}, method="POST")[0], 403)
+                    status, headers, _ = request("/api/bridge/status", code="", method="OPTIONS")
+                    self.assertEqual(status, 204)
+                    self.assertEqual(headers["Access-Control-Allow-Origin"], server.BRIDGE_ORIGIN)
+                    with patch.object(server.capture, "start", return_value=321) as start:
+                        self.assertEqual(request("/api/bridge/start", code="wrong", method="POST", body={})[0], 401)
+                        status, _, body = request("/api/bridge/start", method="POST", body={"udid": "test", "name": "demo"})
+                        self.assertEqual((status, json.loads(body)["session_id"]), (201, 321))
+                        start.assert_called_once_with("test", "demo")
+                    with patch.object(server.capture, "stop", return_value={"running": False}) as stop:
+                        self.assertEqual(request("/api/bridge/stop", method="POST", body={})[0], 200)
+                        stop.assert_called_once()
+                    req = urllib.request.Request(base + "/api/bridge/code")
+                    with urllib.request.urlopen(req, timeout=3) as response:
+                        self.assertEqual(json.load(response)["code"], "test-only-bridge-code")
+                finally:
+                    httpd.shutdown()
+                    httpd.server_close()
+                    thread.join(timeout=3)
 
 
 if __name__ == "__main__":
