@@ -353,6 +353,7 @@ $('rulesFile').addEventListener('change', async (event) => {
 });
 
 restoreEventFilter();
+window.iosEventAppLoaded = true;
 refreshDevices().then(refreshAll);
 setInterval(refreshAll, 2000);
 setInterval(refreshDevices, 15000);
