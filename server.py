@@ -159,6 +159,18 @@ def public_session(session: dict) -> dict:
             "device": "[REDACTED]" if session.get("device") else ""}
 
 
+def local_page() -> bytes:
+    static = ROOT / "static"
+    page = (static / "index.html").read_text(encoding="utf-8")
+    styles = "\n".join((static / name).read_text(encoding="utf-8") for name in
+                       ("style.css", "filters.css", "detail.css", "layout.css"))
+    script = (static / "app.js").read_text(encoding="utf-8")
+    if "</style" in styles.lower() or "</script" in script.lower():
+        raise ValueError("静态资源包含无法内联的结束标签")
+    return page.replace("<!-- IOS_EVENT_STYLES -->", f"<style>{styles}</style>").replace(
+        "<!-- IOS_EVENT_APP -->", f"<script>{script}</script>").encode("utf-8")
+
+
 def list_rules() -> list[dict]:
     with connection() as db:
         rows = db.execute("SELECT * FROM rules ORDER BY id DESC").fetchall()
@@ -420,7 +432,7 @@ class Handler(BaseHTTPRequestHandler):
             if not path.resolve().is_relative_to((ROOT / "static").resolve()) or not path.is_file():
                 return self.send_error(404)
             mime = {".html": "text/html", ".css": "text/css", ".js": "text/javascript"}.get(path.suffix, "application/octet-stream")
-            data = path.read_bytes()
+            data = local_page() if url.path in {"/", "/index.html"} else path.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", mime + "; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))

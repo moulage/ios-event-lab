@@ -4,20 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>iOS 埋点测试工作台</title>
-  <script>
-    window.addEventListener('load', () => {
-      const ready = window.iosEventAppLoaded && getComputedStyle(document.querySelector('.topbar')).height === '62px';
-      if (ready) sessionStorage.removeItem('iosEventAssetRetry');
-      else if (!sessionStorage.getItem('iosEventAssetRetry')) {
-        sessionStorage.setItem('iosEventAssetRetry', '1');
-        location.reload();
-      }
-    });
-  </script>
-  <link rel="stylesheet" href="/style.css">
-  <link rel="stylesheet" href="/filters.css">
-  <link rel="stylesheet" href="/detail.css">
-  <link rel="stylesheet" href="/layout.css">
+  <!-- IOS_EVENT_STYLES -->
 </head>
 <body>
   <div class="app-shell">
@@ -103,6 +90,6 @@
       </section>
     </main>
   </div>
-  <script src="/app.js" defer></script>
+  <!-- IOS_EVENT_APP -->
 </body>
 </html>
