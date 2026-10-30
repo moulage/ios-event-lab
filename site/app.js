@@ -36,14 +36,19 @@ function parseEvent(line) {
 
 function normalizeRows(text, filename) {
   const stamp = new Date().toISOString();
+  const structuredRow = (row, index) => ({
+    id: index + 1, event: String(row.event || ''), properties: row.properties && typeof row.properties === 'object' ? row.properties : {},
+    line: String(row.line || ''), warning: String(row.warning || ''), occurred_at: row.occurred_at || stamp,
+  });
   if (filename.toLowerCase().endsWith('.json')) {
     const data = JSON.parse(text);
     const rows = Array.isArray(data) ? data : data.events || data.logs || data.rows;
     if (!Array.isArray(rows)) throw new Error('JSON 文件没有 events、logs 或 rows 数组');
-    return {name: data.session?.name || filename, rows: rows.slice(0, 100000).map((row, index) => ({
-      id: index + 1, event: String(row.event || ''), properties: row.properties && typeof row.properties === 'object' ? row.properties : {},
-      line: String(row.line || ''), warning: String(row.warning || ''), occurred_at: row.occurred_at || stamp,
-    }))};
+    return {name: data.session?.name || filename, rows: rows.slice(0, 100000).map(structuredRow)};
+  }
+  if (/\.(jsonl|ndjson)$/i.test(filename)) {
+    const rows = text.split(/\r?\n/).filter(Boolean).slice(0, 100000).map((line, index) => structuredRow(JSON.parse(line), index));
+    return {name: filename, rows};
   }
   const rows = text.split(/\r?\n/).filter(Boolean).slice(0, 100000).map((line, index) => {
     const parsed = parseEvent(line);

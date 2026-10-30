@@ -24,6 +24,9 @@ test('offline analyzer parses logs, filters events, and redacts sensitive values
   assert.equal(normalized.rows.length, 2);
   assert.equal(normalized.rows[0].occurred_at, '2026-10-29T11:51:46');
   assert.equal(normalized.rows[1].event, '');
+  const jsonl = vm.runInContext("normalizeRows('{\"event\":\"click\",\"properties\":{\"op\":\"1\"},\"line\":\"event: click\"}', 'sample.jsonl')", context);
+  assert.equal(jsonl.rows[0].event, 'click');
+  assert.equal(jsonl.rows[0].properties.op, '1');
   context.rows = normalized.rows;
   vm.runInContext("state.sessions = [{id: 1, name: 'sample', rows}]; state.current = 1", context);
   elements.get('eventInput')?.value || elements.set('eventInput', {value: ''});
