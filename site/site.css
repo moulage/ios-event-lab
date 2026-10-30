@@ -1,0 +1,7 @@
+.topbar .source-link{color:#236f60;font-size:12px;text-decoration:none;font-weight:600}
+.topbar .source-link:hover{text-decoration:underline}
+.capture-controls{align-items:end}
+.capture-controls .session-field{width:min(320px,100%)}
+.event-table-wrap tbody tr:focus-visible{outline:2px solid #187c65;outline-offset:-2px}
+.event-table-wrap tbody tr{cursor:pointer}
+@media(max-width:650px){.topbar .source-link{font-size:11px}.capture-controls .session-field{width:100%}}

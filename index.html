@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iOS 埋点测试 · 离线分析</title>
+  <link rel="stylesheet" href="static/style.css">
+  <link rel="stylesheet" href="static/filters.css">
+  <link rel="stylesheet" href="static/detail.css">
+  <link rel="stylesheet" href="static/layout.css">
+  <link rel="stylesheet" href="site/site.css">
+</head>
+<body>
+  <header class="topbar"><div class="brand"><span class="brand-mark">E</span><div><strong>iOS 埋点测试</strong><small>离线分析 · 数据仅在当前浏览器中处理</small></div></div><a class="source-link" href="https://github.com/moulage/ios-event-lab">项目源码</a></header>
+  <main>
+    <section class="capture-band" aria-label="日志导入">
+      <div class="section-title"><div><span class="eyebrow">OFFLINE ANALYSIS</span><h1>日志分析</h1></div><p>真机实时采集需在 Mac 上运行本机服务</p></div>
+      <div class="capture-controls"><label class="field session-field"><span>会话名称</span><input id="sessionName" placeholder="例如：首页曝光验证" maxlength="80"></label><button id="importBtn" class="primary" type="button">导入日志</button><input id="importFile" type="file" accept=".log,.txt,.json,.jsonl,.ndjson,text/plain,application/json" multiple hidden><button id="clearLogs" class="secondary" type="button" disabled>清空当前浏览器数据</button></div>
+      <div id="notice" class="notice" role="status" hidden></div>
+    </section>
+    <section class="workspace">
+      <aside class="sessions" aria-label="导入会话"><div class="pane-heading"><h2>会话</h2><span id="sessionCount">0</span></div><div id="sessionList" class="session-list"><div class="session-empty">暂无会话</div></div></aside>
+      <div id="sidebarResize" class="resize-handle" role="separator" tabindex="0" aria-label="调整会话栏宽度" aria-orientation="vertical"></div>
+      <div class="content">
+        <div class="overview"><div><span>当前会话</span><strong id="currentSession">尚未选择</strong></div><div><span>日志行数</span><strong id="logCount">0</strong></div><div><span>埋点事件</span><strong id="eventCount">0</strong></div><div><span>事件类型</span><strong id="typeCount">0</strong></div></div>
+        <nav class="tabs" aria-label="工作台视图"><button class="tab active" data-tab="events" type="button">事件流</button><button class="tab" data-tab="analysis" type="button">统计分析</button></nav>
+        <section id="eventsView" class="view">
+          <div class="toolbar"><div class="primary-filters"><label class="event-wrap"><span class="sr-only">事件名</span><input id="eventInput" class="event-filter-input" list="eventOptions" placeholder="事件名1/事件名2" aria-label="事件名，多个用斜杠分隔"></label><datalist id="eventOptions"></datalist><select id="kindSelect" aria-label="日志类型"><option value="events">仅埋点</option><option value="all">全部日志</option><option value="raw">其他日志</option></select><label class="search-wrap"><span class="sr-only">日志关键词</span><input id="searchInput" type="search" placeholder="日志关键词"></label><span id="resultCount" class="count-label">0 条</span></div><div class="advanced-filters"><div class="sort-control" role="group" aria-label="时间排序"><button id="sortNewest" class="sort-option active" type="button" aria-pressed="true">最新在前</button><button id="sortOldest" class="sort-option" type="button" aria-pressed="false">最早在前</button></div><button id="resetFilters" class="subtle" type="button">清除筛选</button></div></div>
+          <div class="event-layout"><div class="event-table-wrap"><table><thead><tr><th>时间</th><th>事件 / 日志</th><th>状态</th></tr></thead><tbody id="eventRows"></tbody></table><div id="eventEmpty" class="empty">导入日志后，事件会显示在这里。</div></div><div id="detailResize" class="resize-handle" role="separator" tabindex="0" aria-label="调整详情栏宽度" aria-orientation="vertical"></div><aside class="detail"><div class="pane-heading"><h2>详情</h2><span id="detailTime"></span></div><div class="detail-filters"><label><span>属性名</span><input id="fieldInput" class="filter-input" placeholder="beat_guide/sing" aria-label="属性名，支持模糊匹配，多个用斜杠分隔"></label><label><span>属性值</span><input id="valueInput" class="filter-input" placeholder="输入属性值" aria-label="属性值包含"></label></div><div id="detailBody" class="detail-body empty">选择一条记录查看属性与原文。</div></aside></div>
+        </section>
+        <section id="analysisView" class="view" hidden><div class="view-heading"><div><h2>事件分析</h2></div></div><div class="analysis-grid"><div class="analysis-panel"><h3>事件分布</h3><div id="distribution" class="bar-list empty">尚无埋点事件。</div></div><div class="analysis-panel"><h3>分钟趋势</h3><div id="trend" class="bar-list empty">尚无时间数据。</div></div></div></section>
+      </div>
+    </section>
+  </main>
+  <script src="site/app.js" defer></script>
+</body>
+</html>

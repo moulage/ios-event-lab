@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iOS 埋点测试工作台</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/filters.css">
+  <link rel="stylesheet" href="/detail.css">
+  <link rel="stylesheet" href="/layout.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">E</span><div><strong>iOS 埋点测试</strong><small>本机工作台 · local-test</small></div></div>
+      <div class="top-actions"><span id="connectionBadge" class="badge neutral">未连接</span><button id="refreshDevices" class="subtle" type="button">刷新设备</button></div>
+    </header>
+
+    <main>
+      <section class="capture-band" aria-label="采集控制">
+        <div class="section-title"><div><span class="eyebrow">DATA CAPTURE</span><h1>实时采集</h1></div><p>USB 调试日志 · 本机保存</p></div>
+        <div class="capture-controls">
+          <label class="field device-field"><span>测试设备</span><select id="deviceSelect"><option value="">正在查找设备…</option></select></label>
+          <label class="field session-field"><span>会话名称</span><input id="sessionName" placeholder="例如：首页曝光验证" maxlength="80"></label>
+          <button id="startBtn" class="primary" type="button">开始采集</button>
+          <button id="stopBtn" class="danger" type="button" hidden>停止采集</button>
+          <button id="importBtn" class="secondary" type="button">导入控制台日志</button>
+          <input id="importFile" type="file" accept=".log,.txt,.jsonl,.ndjson,text/plain" hidden>
+        </div>
+        <div id="notice" class="notice" role="status" hidden></div>
+      </section>
+
+      <section class="workspace">
+        <aside class="sessions" aria-label="采集会话">
+          <div class="pane-heading"><h2>会话</h2><span id="sessionCount">0</span></div>
+          <div id="sessionList" class="session-list"></div>
+        </aside>
+
+        <div id="sidebarResize" class="resize-handle" role="separator" tabindex="0" aria-label="调整会话栏宽度" aria-orientation="vertical"></div>
+
+        <div class="content">
+          <div class="overview">
+            <div><span>当前会话</span><strong id="currentSession">尚未选择</strong></div>
+            <div><span>日志行数</span><strong id="logCount">0</strong></div>
+            <div><span>埋点事件</span><strong id="eventCount">0</strong></div>
+            <div><span>规则结果</span><strong id="ruleCount">0 / 0</strong></div>
+          </div>
+
+          <nav class="tabs" aria-label="工作台视图">
+            <button class="tab active" data-tab="events" type="button">事件流</button>
+            <button class="tab" data-tab="rules" type="button">规则校验</button>
+            <button class="tab" data-tab="analysis" type="button">统计分析</button>
+          </nav>
+
+          <section id="eventsView" class="view">
+            <div class="toolbar">
+              <div class="primary-filters"><label class="event-wrap"><span class="sr-only">筛选事件名，多个用斜杠分隔</span><input id="eventInput" class="event-filter-input" list="eventOptions" aria-label="事件名，多个用斜杠分隔" placeholder="事件名1/事件名2"></label><datalist id="eventOptions"></datalist>
+                <select id="kindSelect" aria-label="日志类型"><option value="events">仅埋点</option><option value="all">全部日志</option><option value="raw">其他日志</option></select>
+                <label class="search-wrap"><span class="sr-only">日志关键词</span><input id="searchInput" type="search" placeholder="日志关键词"></label>
+                <span id="resultCount" class="count-label">0 条</span></div>
+              <div class="advanced-filters"><div class="sort-control" role="group" aria-label="时间排序"><button id="sortNewest" class="sort-option active" type="button" aria-pressed="true">最新在前</button><button id="sortOldest" class="sort-option" type="button" aria-pressed="false">最早在前</button></div>
+                <button id="resetFilters" class="subtle" type="button">清除筛选</button><button id="clearLogs" class="subtle clear-logs" type="button">清除所有事件日志</button></div>
+            </div>
+            <div class="event-layout">
+              <div class="event-table-wrap"><table><thead><tr><th>时间</th><th>事件 / 日志</th><th>状态</th></tr></thead><tbody id="eventRows"></tbody></table><div id="eventEmpty" class="empty">选择会话或开始采集后，日志会显示在这里。</div></div>
+              <div id="detailResize" class="resize-handle" role="separator" tabindex="0" aria-label="调整详情栏宽度" aria-orientation="vertical"></div>
+              <aside class="detail"><div class="pane-heading"><h2>详情</h2><span id="detailTime"></span></div>
+                <div class="detail-filters"><label><span>属性名</span><input id="fieldInput" class="filter-input" aria-label="属性名，支持模糊匹配，多个用斜杠分隔" title="支持模糊匹配，多个用 / 分隔" placeholder="beat_guide/sing"></label><label><span>属性值</span><input id="valueInput" class="filter-input" aria-label="属性值包含" placeholder="输入属性值"></label></div>
+                <div id="detailBody" class="detail-body empty">选择一条记录查看属性与原文。</div></aside>
+            </div>
+          </section>
+
+          <section id="rulesView" class="view" hidden>
+            <div class="view-heading"><div><h2>验收规则</h2><p>规则对当前会话的全部埋点重新计算。</p></div><div class="export-actions"><span id="rulesSummary" class="summary-pill">暂无规则</span><button id="importRules" class="secondary" type="button">导入规则</button><button id="exportRules" class="secondary" type="button">导出规则</button><input id="rulesFile" type="file" accept=".json,application/json" hidden></div></div>
+            <form id="ruleForm" class="rule-form">
+              <label class="field"><span>规则名称</span><input name="name" placeholder="例如：点击入口后出现详情页" maxlength="80"></label>
+              <label class="field"><span>类型</span><select name="kind" id="ruleKind"><option value="presence">事件出现</option><option value="count">次数范围</option><option value="attribute">字段校验</option><option value="sequence">事件顺序</option></select></label>
+              <label class="field"><span>事件名</span><input name="event" required placeholder="例如：changba_page_will_appear"></label>
+              <div id="countFields" class="conditional" hidden><label class="field"><span>最少次数</span><input name="minimum" type="number" min="0" value="1"></label><label class="field"><span>最多次数</span><input name="maximum" type="number" min="0" placeholder="不限"></label></div>
+              <div id="attributeFields" class="conditional" hidden><label class="field"><span>属性名</span><input name="field" placeholder="例如：page_name"></label><label class="field"><span>比较方式</span><select name="operator"><option value="exists">非空</option><option value="equals">等于</option><option value="regex">匹配正则</option></select></label><label class="field"><span>期望值</span><input name="expected" placeholder="属性值或正则"></label></div>
+              <div id="sequenceFields" class="conditional" hidden><label class="field"><span>后续事件</span><input name="next_event" placeholder="第二个事件名"></label><label class="field"><span>最大间隔（秒）</span><input name="max_seconds" type="number" min="0" step="0.1" placeholder="不限"></label></div>
+              <button class="primary" type="submit">添加规则</button>
+            </form>
+            <div id="ruleList" class="rule-list"></div>
+          </section>
+
+          <section id="analysisView" class="view" hidden>
+            <div class="view-heading"><div><h2>事件分析</h2><p>随采集会话实时更新。</p></div><div class="export-actions"><button id="exportCsv" class="secondary" type="button">导出 CSV</button><button id="exportJson" class="secondary" type="button">导出 JSON</button></div></div>
+            <div class="analysis-grid"><div class="analysis-panel"><h3>事件分布</h3><div id="distribution" class="bar-list empty">尚无埋点事件。</div></div><div class="analysis-panel"><h3>分钟趋势</h3><div id="trend" class="bar-list empty">尚无时间数据。</div></div></div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
