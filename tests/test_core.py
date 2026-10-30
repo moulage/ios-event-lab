@@ -170,8 +170,11 @@ class EventCoreTests(unittest.TestCase):
                 thread.start()
                 base = f"http://127.0.0.1:{httpd.server_address[1]}"
 
-                def request(path, *, origin=server.BRIDGE_ORIGIN, code="test-only-bridge-code", method="GET", body=None):
+                def request(path, *, origin=server.BRIDGE_ORIGIN, code="test-only-bridge-code", method="GET", body=None,
+                            fetch_site=None):
                     headers = {"Origin": origin}
+                    if fetch_site:
+                        headers["Sec-Fetch-Site"] = fetch_site
                     if code:
                         headers["X-Bridge-Token"] = code
                     if body is not None:
@@ -194,6 +197,10 @@ class EventCoreTests(unittest.TestCase):
                     self.assertEqual(request("/api/bridge/status", origin="https://evil.example")[0], 403)
                     self.assertEqual(request("/api/bridge/code")[0], 403)
                     self.assertEqual(request("/api/capture/start", body={"udid": "fake"}, method="POST")[0], 403)
+                    status, _, body = request("/api/bridge/code", origin="null", code="", fetch_site="same-origin")
+                    self.assertEqual(status, 200)
+                    self.assertEqual(json.loads(body)["code"], "test-only-bridge-code")
+                    self.assertEqual(request("/api/bridge/code", origin="null", code="", fetch_site="cross-site")[0], 403)
                     status, headers, _ = request("/api/bridge/status", code="", method="OPTIONS")
                     self.assertEqual(status, 204)
                     self.assertEqual(headers["Access-Control-Allow-Origin"], server.BRIDGE_ORIGIN)

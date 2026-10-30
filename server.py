@@ -332,8 +332,10 @@ class Handler(BaseHTTPRequestHandler):
             self.respond({"error": "仅允许从本机地址访问"}, 403)
             return False
         origin = self.headers.get("Origin")
-        if origin and origin not in (local_origins if code or not bridge else local_origins | {BRIDGE_ORIGIN}):
-            self.respond({"error": "不允许的网页来源"}, 403)
+        allowed_origins = local_origins if code or not bridge else local_origins | {BRIDGE_ORIGIN}
+        browser_same_origin = self.headers.get("Sec-Fetch-Site") == "same-origin"
+        if origin and origin not in allowed_origins and not browser_same_origin:
+            self.respond({"error": f"不允许的网页来源：{origin[:120]}"}, 403)
             return False
         if bridge and not code and not hmac.compare_digest(self.headers.get("X-Bridge-Token", ""), BRIDGE_TOKEN):
             self.respond({"error": "连接码无效，请从本机工作台重新复制"}, 401)
