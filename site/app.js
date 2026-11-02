@@ -39,18 +39,22 @@ function parseEvent(line) {
 
 function normalizeRows(text, filename) {
   const stamp = new Date().toISOString();
-  const structuredRow = (row, index) => ({
-    id: index + 1, event: String(row.event || ''), properties: row.properties && typeof row.properties === 'object' ? row.properties : {},
-    line: String(row.line || ''), warning: String(row.warning || ''), occurred_at: row.occurred_at || stamp,
-  });
+  const structuredRow = (row, index) => {
+    const parsed = parseEvent(String(row.line || ''));
+    return {
+      id: index + 1, event: String(row.event || parsed?.event || ''),
+      properties: row.properties && typeof row.properties === 'object' ? row.properties : parsed?.properties || {},
+      line: String(row.line || ''), warning: String(row.warning || parsed?.warning || ''), occurred_at: row.occurred_at || stamp,
+    };
+  };
   if (filename.toLowerCase().endsWith('.json')) {
     const data = JSON.parse(text);
     const rows = Array.isArray(data) ? data : data.events || data.logs || data.rows;
     if (!Array.isArray(rows)) throw new Error('JSON 文件没有 events、logs 或 rows 数组');
-    return {name: data.session?.name || filename, rows: rows.slice(0, 100000).map(structuredRow)};
+    return {name: data.session?.name || filename, rows: rows.slice(0, 100000).map(structuredRow).filter((row) => row.event)};
   }
   if (/\.(jsonl|ndjson)$/i.test(filename)) {
-    const rows = text.split(/\r?\n/).filter(Boolean).slice(0, 100000).map((line, index) => structuredRow(JSON.parse(line), index));
+    const rows = text.split(/\r?\n/).filter(Boolean).slice(0, 100000).map((line, index) => structuredRow(JSON.parse(line), index)).filter((row) => row.event);
     return {name: filename, rows};
   }
   const rows = text.split(/\r?\n/).filter(Boolean).slice(0, 100000).map((line, index) => {
@@ -58,7 +62,7 @@ function normalizeRows(text, filename) {
     const match = line.match(/(?:^|\s)(\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d(?:\.\d+)?)/);
     return {id: index + 1, event: parsed?.event || '', properties: parsed?.properties || {}, warning: parsed?.warning || '',
       line, occurred_at: match ? match[1].replace(' ', 'T') : stamp};
-  });
+  }).filter((row) => row.event);
   return {name: filename, rows};
 }
 
@@ -105,13 +109,15 @@ function renderDetail() {
   const entries = Object.entries(row.properties);
   const filtered = Boolean($('fieldInput').value.trim() || $('valueInput').value.trim());
   const matches = filtered ? matchingProperties(row.properties) : [];
+  const missingFields = terms($('fieldInput').value).filter((term) =>
+    !entries.some(([key]) => key.toLocaleLowerCase().includes(term.toLocaleLowerCase())));
   const matched = new Set(matches.map(([key]) => key));
   const other = filtered ? entries.filter(([key]) => !matched.has(key)) : entries;
-  const selectedSection = filtered && row.event ? `<section class="selected-properties"><h3>匹配属性 · ${matches.length}</h3>${matches.length ? propertyList(matches) : '<p class="no-property-match">当前事件没有匹配的属性</p>'}</section>` : '';
+  const selectedSection = filtered && row.event ? `<section class="selected-properties"><h3>匹配属性 · ${matches.length}</h3>${matches.length ? propertyList(matches) : '<p class="no-property-match">当前事件没有匹配的属性</p>'}${missingFields.length ? `<p class="missing-property-fields">当前记录未采到：${missingFields.map(escapeHtml).join(' / ')}${String(row.warning || '').includes('截断') ? '；原始日志疑似截断，无法判断是否已上报' : ''}</p>` : ''}</section>` : '';
   const otherSection = filtered && row.event
     ? other.length ? `<details class="other-properties" open><summary>其他属性 · ${other.length}</summary>${propertyList(other)}</details>` : ''
     : other.length ? `<h3 class="remaining-title">全部属性</h3>${propertyList(other)}` : '';
-  target.innerHTML = `<h3>${escapeHtml(row.event || '运行日志')}</h3>${row.warning ? `<div class="notice error">${escapeHtml(row.warning)}</div>` : ''}${selectedSection}${otherSection}<h3 class="remaining-title">原始日志（已遮罩）</h3><pre class="raw-block">${escapeHtml(redact(row.line))}</pre>`;
+  target.innerHTML = `<h3>${escapeHtml(row.event)}</h3>${row.warning ? `<div class="notice error">${escapeHtml(row.warning)}</div>` : ''}${selectedSection}${otherSection}<h3 class="remaining-title">埋点原文（已遮罩）</h3><pre class="raw-block">${escapeHtml(redact(row.line))}</pre>`;
 }
 
 function filteredRows() {
@@ -120,10 +126,9 @@ function filteredRows() {
   if (state.mode === 'live') return session.rows;
   const events = terms($('eventInput').value);
   const keyword = $('searchInput').value.trim().toLocaleLowerCase();
-  const kind = $('kindSelect').value;
   return session.rows.filter((row) => {
     if (events.length && !events.includes(row.event)) return false;
-    if (kind === 'events' && !row.event || kind === 'raw' && row.event) return false;
+    if (!row.event) return false;
     return !keyword || row.line.toLocaleLowerCase().includes(keyword);
   }).sort((left, right) => (String(left.occurred_at).localeCompare(String(right.occurred_at)) || left.id - right.id) * (state.order === 'asc' ? 1 : -1));
 }
@@ -135,10 +140,10 @@ function renderRows() {
   $('resultCount').textContent = `${total} 条${total > 500 ? ` · ${state.order === 'asc' ? '最早' : '最新'} 500 条` : ''}`;
   if (!state.visible.some((row) => row.id === state.selected)) state.selected = state.visible[0]?.id || 0;
   $('eventEmpty').hidden = state.visible.length > 0;
-  $('eventEmpty').textContent = state.mode === 'live' ? '连接本机并开始采集后，事件会显示在这里。' : '导入日志后，事件会显示在这里。';
+  $('eventEmpty').textContent = state.mode === 'live' ? '连接本机并开始采集后，事件会显示在这里。' : '导入埋点日志后，事件会显示在这里。';
   $('eventRows').innerHTML = state.visible.map((row) => {
-    const preview = row.event ? Object.entries(row.properties).slice(0, 3).map(([key, value]) => `${key}: ${sensitiveName.test(key) ? '[REDACTED]' : redact(value)}`).join(' · ') : redact(row.line);
-    return `<tr tabindex="0" data-id="${row.id}" class="${row.id === state.selected ? 'selected' : ''}"><td class="cell-time">${escapeHtml(String(row.occurred_at).slice(11, 19))}</td><td><span class="event-name">${escapeHtml(row.event || '运行日志')}</span><span class="event-preview">${escapeHtml(preview)}</span></td><td><span class="tag ${row.warning ? 'warn' : row.event ? '' : 'raw'}">${row.warning ? '需核对' : row.event ? '埋点' : '日志'}</span></td></tr>`;
+    const preview = Object.entries(row.properties).slice(0, 3).map(([key, value]) => `${key}: ${sensitiveName.test(key) ? '[REDACTED]' : redact(value)}`).join(' · ');
+    return `<tr tabindex="0" data-id="${row.id}" class="${row.id === state.selected ? 'selected' : ''}"><td class="cell-time">${escapeHtml(String(row.occurred_at).slice(11, 19))}</td><td><span class="event-name">${escapeHtml(row.event)}</span><span class="event-preview">${escapeHtml(preview)}</span></td><td><span class="tag ${row.warning ? 'warn' : ''}">${row.warning ? '需核对' : '埋点'}</span></td></tr>`;
   }).join('');
   $('eventRows').querySelectorAll('tr').forEach((element) => {
     const select = () => {
@@ -164,7 +169,6 @@ function render() {
   renderSessions();
   const session = current();
   $('currentSession').textContent = session?.name || '尚未选择';
-  $('logCount').textContent = (session?.line_count ?? session?.rows.length ?? 0).toLocaleString('zh-CN');
   const events = session?.rows.filter((row) => row.event) || [];
   $('eventCount').textContent = (session?.event_count ?? events.length).toLocaleString('zh-CN');
   const byName = new Map();
@@ -277,7 +281,7 @@ async function refreshLiveLogs() {
   const session = current();
   if (!sessionId || !session) { render(); return; }
   const request = ++state.liveRequest;
-  const params = new URLSearchParams({session: sessionId, kind: $('kindSelect').value,
+  const params = new URLSearchParams({session: sessionId,
     event: $('eventInput').value, search: $('searchInput').value, order: state.order});
   const data = await bridgeApi(`/api/bridge/logs?${params}`);
   if (request !== state.liveRequest || sessionId !== state.current || state.mode !== 'live') return;
@@ -325,7 +329,6 @@ function switchMode(mode) {
   state.current = mode === 'live' ? state.liveCurrent : state.offlineCurrent;
   state.selected = 0;
   for (const id of ['eventInput', 'searchInput', 'fieldInput', 'valueInput']) $(id).value = '';
-  $('kindSelect').value = 'events';
   $('liveControls').hidden = mode !== 'live';
   $('offlineControls').hidden = mode !== 'offline';
   for (const [id, value] of [['modeLive', 'live'], ['modeOffline', 'offline']]) {
@@ -396,21 +399,21 @@ $('importFile').addEventListener('change', async (event) => {
       state.current = session.id;
       state.offlineCurrent = session.id;
       state.selected = 0;
-      notice(`已导入 ${file.name}，${session.rows.length} 行。`);
+      notice(`已导入 ${file.name}，${session.rows.length} 个埋点事件。`);
     } catch (error) { notice(error.message, true); }
   }
   event.target.value = '';
   render();
 });
 $('clearLogs').addEventListener('click', () => {
-  if (!window.confirm('清空当前浏览器中的全部已导入日志？')) return;
+  if (!window.confirm('清空当前浏览器中的全部已导入埋点事件？')) return;
   state.sessions = [];
   state.offlineSessions = [];
   state.current = 0;
   state.offlineCurrent = 0;
   state.selected = 0;
   render();
-  notice('已清空当前浏览器中的日志。');
+  notice('已清空当前浏览器中的埋点事件。');
 });
 let filterTimer;
 function updateRows() {
@@ -419,11 +422,9 @@ function updateRows() {
   filterTimer = setTimeout(() => refreshLiveLogs().catch(bridgeError), 200);
 }
 for (const id of ['eventInput', 'searchInput']) $(id).addEventListener('input', updateRows);
-$('kindSelect').addEventListener('change', updateRows);
 for (const id of ['fieldInput', 'valueInput']) $(id).addEventListener('input', renderDetail);
 $('resetFilters').addEventListener('click', () => {
   for (const id of ['eventInput', 'searchInput', 'fieldInput', 'valueInput']) $(id).value = '';
-  $('kindSelect').value = 'events';
   updateRows();
 });
 for (const [id, order] of [['sortNewest', 'desc'], ['sortOldest', 'asc']]) $(id).addEventListener('click', () => {

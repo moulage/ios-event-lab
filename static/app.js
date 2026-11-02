@@ -74,7 +74,6 @@ async function refreshSessions() {
   renderSessions(data.sessions);
   const current = data.sessions.find((item) => item.id === state.sessionId);
   $('currentSession').textContent = current?.name || '尚未选择';
-  $('logCount').textContent = (current?.line_count || 0).toLocaleString('zh-CN');
   $('eventCount').textContent = (current?.event_count || 0).toLocaleString('zh-CN');
   if (current?.error) message(current.error, true);
   else if (current && !['running', 'cleared'].includes(current.status) && current.event_count === 0)
@@ -84,7 +83,8 @@ async function refreshSessions() {
   $('stopBtn').hidden = !capture.running || capture.passive;
   $('deviceSelect').disabled = capture.running || capture.passive;
   $('startBtn').disabled = !capture.running && !$('deviceSelect').value;
-  $('clearLogs').disabled = capture.running || capture.passive || !data.sessions.length;
+  $('clearLogs').disabled = capture.passive || !current || current.status === 'running' ||
+    (capture.running && capture.session_id === current.id);
   $('bridgePanel').hidden = capture.passive;
   if (capture.running) {
     $('connectionBadge').textContent = capture.passive ? '其他端口采集中' : '正在采集';
@@ -103,7 +103,7 @@ function renderRows(rows, total) {
   if (resetDetailScroll) state.selectedId = rows[0]?.id || 0;
   body.innerHTML = rows.map((row) => {
     const preview = row.event ? Object.entries(row.properties).slice(0, 3).map(([key, value]) => `${key}: ${value}`).join(' · ') : row.line;
-    return `<tr data-id="${row.id}" class="${row.id === state.selectedId ? 'selected' : ''}"><td class="cell-time">${escapeHtml(when(row.occurred_at))}</td><td><span class="event-name">${escapeHtml(row.event || '运行日志')}</span><span class="event-preview">${escapeHtml(preview)}</span></td><td><span class="tag ${row.warning ? 'warn' : row.event ? '' : 'raw'}">${row.warning ? '需核对' : row.event ? '埋点' : '日志'}</span></td></tr>`;
+    return `<tr data-id="${row.id}" class="${row.id === state.selectedId ? 'selected' : ''}"><td class="cell-time">${escapeHtml(when(row.occurred_at))}</td><td><span class="event-name">${escapeHtml(row.event)}</span><span class="event-preview">${escapeHtml(preview)}</span></td><td><span class="tag ${row.warning ? 'warn' : ''}">${row.warning ? '需核对' : '埋点'}</span></td></tr>`;
   }).join('');
   body.querySelectorAll('tr').forEach((row) => row.addEventListener('click', () => selectRow(Number(row.dataset.id))));
   renderDetail(rows.find((row) => row.id === state.selectedId), resetDetailScroll);
@@ -134,11 +134,11 @@ function renderDetail(row, resetScroll = false) {
   const otherSection = hasFilter && row.event
     ? (remaining.length ? `<details class="other-properties" open><summary>其他属性 · ${remaining.length}</summary><dl class="properties">${remaining.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`).join('')}</dl></details>` : '')
     : (remaining.length ? `<h3 class="remaining-title">全部属性</h3><dl class="properties">${remaining.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`).join('')}</dl>` : '');
-  target.innerHTML = `<h3>${escapeHtml(row.event || '运行日志')}</h3>${row.warning ? `<div class="notice error">${escapeHtml(row.warning)}</div>` : ''}${matchedSection}${otherSection}<h3 class="remaining-title">原始日志（已遮罩）</h3><pre class="raw-block">${escapeHtml(row.line)}</pre>`;
+  target.innerHTML = `<h3>${escapeHtml(row.event)}</h3>${row.warning ? `<div class="notice error">${escapeHtml(row.warning)}</div>` : ''}${matchedSection}${otherSection}<h3 class="remaining-title">埋点原文（已遮罩）</h3><pre class="raw-block">${escapeHtml(row.line)}</pre>`;
 }
 async function refreshLogs() {
   if (!state.sessionId) { renderRows([], 0); return; }
-  const params = new URLSearchParams({session: state.sessionId, kind: $('kindSelect').value,
+  const params = new URLSearchParams({session: state.sessionId,
     search: $('searchInput').value, event: $('eventInput').value, order: state.order});
   const data = await api(`/api/logs?${params}`);
   renderRows(data.rows, data.total);
@@ -165,11 +165,13 @@ function renderRules(rules) {
 async function refreshAnalysis() {
   if (!state.sessionId) {
     renderBars('distribution', []); renderBars('trend', []);
+    $('typeCount').textContent = '0';
     const data = await api('/api/rules');
     renderRules(data.rules.map((rule) => ({...rule, status:'pending', detail:'选择会话后运行校验'})));
     return;
   }
   const data = await api(`/api/analysis?session=${state.sessionId}`);
+  $('typeCount').textContent = data.summary.by_event.length.toLocaleString('zh-CN');
   renderBars('distribution', data.summary.by_event);
   renderBars('trend', data.summary.trend.map(([time, count]) => [time.slice(5).replace('T',' '), count]));
   renderRules(data.rules);
@@ -228,12 +230,10 @@ $('importFile').addEventListener('change', async (event) => {
 });
 let searchTimer;
 $('searchInput').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => refreshLogs().catch((e) => message(e.message, true)), 200); });
-$('kindSelect').addEventListener('change', () => refreshLogs().catch((e) => message(e.message, true)));
 $('eventInput').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => refreshLogs().catch((e) => message(e.message, true)), 200); });
 for (const id of ['fieldInput', 'valueInput']) $(id).addEventListener('input', () => renderDetail(state.rows.find((row) => row.id === state.selectedId), true));
 $('resetFilters').addEventListener('click', () => {
   for (const id of ['searchInput', 'eventInput', 'fieldInput', 'valueInput']) $(id).value = '';
-  $('kindSelect').value = 'events';
   renderDetail(state.rows.find((row) => row.id === state.selectedId), true);
   refreshLogs().catch((e) => message(e.message, true));
 });
@@ -248,16 +248,17 @@ for (const [id, order] of [['sortNewest', 'desc'], ['sortOldest', 'asc']]) $(id)
   refreshLogs().catch((error) => message(error.message, true));
 });
 $('clearLogs').addEventListener('click', async () => {
-  if (!window.confirm('清除 local-test 中所有会话的事件与运行日志？会话和规则保留，此操作不可撤销。')) return;
+  const sessionId = state.sessionId;
+  if (!sessionId) return;
+  const sessionName = $('currentSession').textContent;
+  if (!window.confirm(`清除当前会话“${sessionName}”的全部埋点事件？其他会话和规则保留，此操作不可撤销。`)) return;
   try {
-    const data = await api('/api/sessions/clear', {method: 'POST', body: JSON.stringify({environment: 'local-test', confirm: 'CLEAR_LOCAL_TEST_LOGS'})});
-    state.sessionId = 0;
+    const data = await api('/api/sessions/clear', {method: 'POST', body: JSON.stringify({environment: 'local-test', confirm: 'CLEAR_LOCAL_TEST_LOGS', session_id: sessionId})});
     state.selectedId = 0;
-    localStorage.removeItem('iosEventSession');
     await refreshSessions();
     await refreshAnalysis();
     await refreshLogs();
-    message(`已清除 ${data.cleared_logs} 条日志。`);
+    message(`已清除当前会话的 ${data.cleared_logs} 条记录。`);
   } catch (error) { message(error.message, true); }
 });
 

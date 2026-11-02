@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-test('offline analyzer parses logs, filters events, and redacts sensitive values', () => {
+test('offline analyzer keeps events only, filters them, and redacts sensitive values', () => {
   const source = fs.readFileSync(path.join(__dirname, '../site/app.js'), 'utf8');
   const setup = source.slice(0, source.indexOf("$('modeLive').addEventListener"));
   const elements = new Map();
@@ -21,9 +21,8 @@ test('offline analyzer parses logs, filters events, and redacts sensitive values
   assert.equal(parsed.properties.beat_guide_status, '1');
   assert.equal(parsed.properties.song_name, '青花瓷');
   const normalized = vm.runInContext("normalizeRows('2026-10-29 11:51:46 sensor statitic -- event: enter_page_sing, beat_guide_status: 1\\nother log', 'sample.log')", context);
-  assert.equal(normalized.rows.length, 2);
+  assert.equal(normalized.rows.length, 1);
   assert.equal(normalized.rows[0].occurred_at, '2026-10-29T11:51:46');
-  assert.equal(normalized.rows[1].event, '');
   const jsonl = vm.runInContext("normalizeRows('{\"event\":\"click\",\"properties\":{\"op\":\"1\"},\"line\":\"event: click\"}', 'sample.jsonl')", context);
   assert.equal(jsonl.rows[0].event, 'click');
   assert.equal(jsonl.rows[0].properties.op, '1');
@@ -31,7 +30,6 @@ test('offline analyzer parses logs, filters events, and redacts sensitive values
   vm.runInContext("state.mode = 'offline'; state.sessions = [{id: 1, name: 'sample', rows}]; state.current = 1", context);
   elements.get('eventInput')?.value || elements.set('eventInput', {value: ''});
   elements.set('searchInput', {value: ''});
-  elements.set('kindSelect', {value: 'events'});
   assert.equal(vm.runInContext('filteredRows().length', context), 1);
   elements.set('eventInput', {value: 'enter_page_sing/finish_sing'});
   assert.equal(vm.runInContext('filteredRows().length', context), 1);
@@ -44,7 +42,7 @@ test('online bridge sends the code in a header and queries server-side event fil
   const source = fs.readFileSync(path.join(__dirname, '../site/app.js'), 'utf8');
   const setup = source.slice(0, source.indexOf("$('modeLive').addEventListener"));
   const values = new Map([
-    ['eventInput', 'open/close'], ['searchInput', 'keyword'], ['kindSelect', 'events'],
+    ['eventInput', 'open/close'], ['searchInput', 'keyword'],
   ]);
   const requests = [];
   const context = vm.createContext({

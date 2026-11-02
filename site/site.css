@@ -13,3 +13,6 @@
 .event-table-wrap tbody tr:focus-visible{outline:2px solid #187c65;outline-offset:-2px}
 .event-table-wrap tbody tr{cursor:pointer}
 @media(max-width:650px){.topbar .source-link{font-size:11px}.capture-controls .session-field,.bridge-field{width:100%}.bridge-status{width:100%}}
+.missing-property-fields{margin:10px 0 2px;color:#915b37;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.overview{grid-template-columns:minmax(0,2fr) repeat(2,minmax(0,1fr))}
+@media(max-width:650px){.overview{grid-template-columns:1fr 1fr}}

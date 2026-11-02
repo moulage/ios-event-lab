@@ -102,6 +102,22 @@ class EventCoreTests(unittest.TestCase):
                 rows, total = server.log_page(session_id, {"kind": "events", "order": "asc"})
                 self.assertEqual((total, [row["event"] for row in rows]), (3, ["open", "click", "close"]))
 
+    def test_only_event_lines_are_saved_and_returned(self):
+        with tempfile.TemporaryDirectory(prefix="local-test-ios-events-") as path:
+            data = Path(path)
+            with patch.object(server, "DATA", data), patch.object(server, "DB", data / "events.sqlite3"):
+                server.init_db()
+                session_id = server.create_session("event-only local-test", "import")
+                server.append_line(session_id, "2026-11-02 12:00:00 ordinary debug line", "import")
+                server.append_line(session_id, "sensor statitic -- event: open, page: home", "import")
+                with server.connection() as db:
+                    self.assertEqual(tuple(db.execute(
+                        "SELECT line_count, event_count FROM sessions WHERE id=?", (session_id,)).fetchone()), (1, 1))
+                    db.execute("INSERT INTO logs(session_id,occurred_at,time_source,line) VALUES(?,?,?,?)",
+                               (session_id, server.now(), "import", "historical debug line"))
+                rows, total = server.log_page(session_id, {"kind": "all"})
+                self.assertEqual((total, [row["event"] for row in rows]), (1, ["open"]))
+
     def test_clear_local_test_logs_preserves_sessions_and_rules(self):
         with tempfile.TemporaryDirectory(prefix="local-test-ios-events-") as path:
             data = Path(path)
@@ -109,6 +125,8 @@ class EventCoreTests(unittest.TestCase):
                 server.init_db()
                 session_id = server.create_session("clear test local-test", "import")
                 server.append_line(session_id, "sensor statitic -- event: open, page: home", "import")
+                other_id = server.create_session("other local-test", "import")
+                server.append_line(other_id, "sensor statitic -- event: close, page: other", "import")
                 with server.connection() as db:
                     db.execute("INSERT INTO rules(name, kind, event, config) VALUES(?,?,?,?)",
                                ("open", "presence", "open", "{}"))
@@ -117,13 +135,14 @@ class EventCoreTests(unittest.TestCase):
                 with server.connection() as db:
                     db.execute("UPDATE sessions SET status='running' WHERE id=?", (session_id,))
                 with self.assertRaisesRegex(ValueError, "采集中"):
-                    server.clear_local_logs({"environment": "local-test", "confirm": "CLEAR_LOCAL_TEST_LOGS"})
+                    server.clear_local_logs({"environment": "local-test", "confirm": "CLEAR_LOCAL_TEST_LOGS", "session_id": session_id})
                 with server.connection() as db:
                     db.execute("UPDATE sessions SET status='finished' WHERE id=?", (session_id,))
-                self.assertEqual(server.clear_local_logs({"environment": "local-test", "confirm": "CLEAR_LOCAL_TEST_LOGS"}), 1)
+                self.assertEqual(server.clear_local_logs({"environment": "local-test", "confirm": "CLEAR_LOCAL_TEST_LOGS", "session_id": session_id}), 1)
                 with server.connection() as db:
-                    self.assertEqual(db.execute("SELECT COUNT(*) FROM logs").fetchone()[0], 0)
+                    self.assertEqual(db.execute("SELECT COUNT(*) FROM logs").fetchone()[0], 1)
                     self.assertEqual(tuple(db.execute("SELECT line_count, event_count FROM sessions WHERE id=?", (session_id,)).fetchone()), (0, 0))
+                    self.assertEqual(tuple(db.execute("SELECT line_count, event_count FROM sessions WHERE id=?", (other_id,)).fetchone()), (1, 1))
                     self.assertEqual(db.execute("SELECT status FROM sessions WHERE id=?", (session_id,)).fetchone()[0], "cleared")
                     self.assertEqual(db.execute("SELECT COUNT(*) FROM rules").fetchone()[0], 1)
 

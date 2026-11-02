@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from core import evaluate_rules, log_timestamp, parse_event, redact, redact_properties, split_terms, summarize
+from core import MARKER, evaluate_rules, log_timestamp, parse_event, redact, redact_properties, split_terms, summarize
 
 ROOT = Path(__file__).resolve().parent
 ENVIRONMENT = "local-test"
@@ -28,7 +28,6 @@ DB = DATA / "events.sqlite3"
 PASSIVE = os.environ.get("IOS_EVENT_LAB_PASSIVE") == "1"
 BRIDGE_ORIGIN = "https://moulage.github.io"
 BRIDGE_TOKEN = secrets.token_urlsafe(24)
-MAX_LINES = 100_000
 MAX_IMPORT_BYTES = 10 * 1024 * 1024
 MAX_BODY = MAX_IMPORT_BYTES + 4096
 
@@ -82,19 +81,18 @@ def append_line(session_id: int, line: str, source: str) -> bool:
     if not line:
         return True
     event = parse_event(line)
+    if not event or not event["event"]:
+        return True
     with connection() as db:
-        count = db.execute("SELECT line_count FROM sessions WHERE id=?", (session_id,)).fetchone()
-        if not count or count[0] >= MAX_LINES:
+        if not db.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone():
             return False
         stamp = log_timestamp(line)
         db.execute(
             "INSERT INTO logs(session_id, occurred_at, time_source, line, event, properties, warning) VALUES(?,?,?,?,?,?,?)",
             (session_id, stamp or now(), "log" if stamp else ("capture" if source == "usb" else "import"),
-             line, event["event"] if event else None, json.dumps(event["properties"], ensure_ascii=False) if event else None,
-             event["warning"] if event else ""),
+             line, event["event"], json.dumps(event["properties"], ensure_ascii=False), event["warning"]),
         )
-        db.execute("UPDATE sessions SET line_count=line_count+1, event_count=event_count+? WHERE id=?",
-                   (1 if event and event["event"] else 0, session_id))
+        db.execute("UPDATE sessions SET line_count=line_count+1, event_count=event_count+1 WHERE id=?", (session_id,))
     return True
 
 
@@ -108,17 +106,13 @@ def load_rows(session_id: int, *, events_only=False) -> list[dict]:
 def log_page(session_id: int, query: dict) -> tuple[list[dict], int]:
     events = split_terms(query.get("event", ""))
     search = query.get("search", "")
-    if not events and query.get("kind") != "raw" and "/" in search:
+    if not events and "/" in search:
         candidates = split_terms(search)
         if candidates and all(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name) for name in candidates):
             events = candidates
             search = ""
-    clauses = ["session_id=?", "id>?"]
+    clauses = ["session_id=?", "id>?", "event IS NOT NULL"]
     params = [session_id, int(query.get("after", "0"))]
-    if query.get("kind") == "events" or events:
-        clauses.append("event IS NOT NULL")
-    elif query.get("kind") == "raw":
-        clauses.append("event IS NULL")
     if events:
         clauses.append(f"event IN ({','.join('?' for _ in events)})")
         params.extend(events)
@@ -139,20 +133,33 @@ def clear_local_logs(data: dict) -> int:
         raise ValueError("仅允许确认后清除 local-test 数据")
     if PASSIVE:
         raise ValueError("只读页面不能清除采集数据")
+    try:
+        session_id = int(data.get("session_id", 0))
+    except (TypeError, ValueError):
+        raise ValueError("请选择要清除日志的会话") from None
+    if session_id <= 0:
+        raise ValueError("请选择要清除日志的会话")
     with capture.lock:
-        if capture.process is not None and capture.process.poll() is None:
-            raise ValueError("采集中不能清除日志，请先停止采集")
+        if capture.session_id == session_id and capture.process is not None and capture.process.poll() is None:
+            raise ValueError("采集中不能清除当前会话，请先停止采集")
         with connection() as db:
-            if db.execute("SELECT 1 FROM sessions WHERE status='running' LIMIT 1").fetchone():
-                raise ValueError("采集中不能清除日志，请先停止采集")
-            count = db.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
-            db.execute("DELETE FROM logs")
-            db.execute("UPDATE sessions SET line_count=0, event_count=0, status='cleared', error=''")
+            session = db.execute("SELECT status FROM sessions WHERE id=?", (session_id,)).fetchone()
+            if session is None:
+                raise ValueError("会话不存在")
+            if session["status"] == "running":
+                raise ValueError("采集中不能清除当前会话，请先停止采集")
+            count = db.execute("DELETE FROM logs WHERE session_id=?", (session_id,)).rowcount
+            db.execute("UPDATE sessions SET line_count=0, event_count=0, status='cleared', error='' WHERE id=?", (session_id,))
     return count
 
 
 def public_row(row: dict) -> dict:
-    return {**row, "line": redact(row["line"]), "properties": redact_properties(row["properties"])}
+    warning = row["warning"] or ""
+    if row.get("event") and len(row["line"].encode("utf-8")) == 950:
+        warning = f"{warning}；" if warning else ""
+        warning += "原始日志恰好 950 字节，疑似被上游截断；后续属性可能未采到"
+    return {**row, "line": redact(row["line"]), "properties": redact_properties(row["properties"]),
+            "warning": warning}
 
 
 def public_session(session: dict) -> dict:
@@ -247,7 +254,7 @@ class Capture:
                 raise ValueError("已有采集正在运行")
             session_id = create_session(name, "usb", udid)
             self.process = subprocess.Popen(
-                ["idevicesyslog", "-u", udid, "-x", "--no-colors", "-p", "ktv"],
+                ["idevicesyslog", "-u", udid, "-x", "--no-colors", "-p", "ktv", "-m", MARKER],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
             )
             self.session_id = session_id
@@ -260,16 +267,26 @@ class Capture:
         try:
             for line in process.stdout:
                 if not append_line(session_id, line, "usb"):
-                    error = f"达到单次采集上限 {MAX_LINES} 行，已自动停止"
-                    process.terminate()
+                    error = "会话不存在，采集已停止"
                     break
-            code = process.wait(timeout=5)
+            if process.poll() is None:
+                process.terminate()
+            try:
+                code = process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                code = process.wait()
             if code and not error and session_id not in self.stopping:
                 error = f"日志采集进程退出，代码 {code}；请检查连接和信任状态"
         except Exception as exc:
             error = f"采集失败：{exc}"
             if process.poll() is None:
                 process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
         finally:
             with connection() as db:
                 db.execute("UPDATE sessions SET status=?, error=? WHERE id=?",

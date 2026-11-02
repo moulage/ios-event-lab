@@ -15,13 +15,13 @@
 
     <main>
       <section class="capture-band" aria-label="采集控制">
-        <div class="section-title"><div><span class="eyebrow">DATA CAPTURE</span><h1>实时采集</h1></div><p>USB 调试日志 · 本机保存</p></div>
+        <div class="section-title"><div><span class="eyebrow">DATA CAPTURE</span><h1>实时采集</h1></div><p>USB 埋点事件 · 本机保存</p></div>
         <div class="capture-controls">
           <label class="field device-field"><span>测试设备</span><select id="deviceSelect"><!-- IOS_EVENT_DEVICE_OPTIONS --></select></label>
           <label class="field session-field"><span>会话名称</span><input id="sessionName" placeholder="例如：首页曝光验证" maxlength="80"></label>
           <button id="startBtn" class="primary" type="button">开始采集</button>
           <button id="stopBtn" class="danger" type="button" hidden>停止采集</button>
-          <button id="importBtn" class="secondary" type="button">导入控制台日志</button>
+          <button id="importBtn" class="secondary" type="button">导入埋点日志</button>
           <input id="importFile" type="file" accept=".log,.txt,.jsonl,.ndjson,text/plain" hidden>
         </div>
         <div id="bridgePanel" class="bridge-panel"><span>网页版连接码</span><input id="bridgeCode" aria-label="网页版连接码" readonly><button id="copyBridgeCode" class="secondary" type="button">复制连接码</button><a href="https://moulage.github.io/ios-event-lab/" target="_blank" rel="noopener noreferrer">打开网页版</a></div>
@@ -40,7 +40,7 @@
         <div class="content">
           <div class="overview">
             <div><span>当前会话</span><strong id="currentSession">尚未选择</strong></div>
-            <div><span>日志行数</span><strong id="logCount">0</strong></div>
+            <div><span>事件类型</span><strong id="typeCount">0</strong></div>
             <div><span>埋点事件</span><strong id="eventCount">0</strong></div>
             <div><span>规则结果</span><strong id="ruleCount">0 / 0</strong></div>
           </div>
@@ -54,14 +54,13 @@
           <section id="eventsView" class="view">
             <div class="toolbar">
               <div class="primary-filters"><label class="event-wrap"><span class="sr-only">筛选事件名，多个用斜杠分隔</span><input id="eventInput" class="event-filter-input" list="eventOptions" aria-label="事件名，多个用斜杠分隔" placeholder="事件名1/事件名2"></label><datalist id="eventOptions"></datalist>
-                <select id="kindSelect" aria-label="日志类型"><option value="events">仅埋点</option><option value="all">全部日志</option><option value="raw">其他日志</option></select>
-                <label class="search-wrap"><span class="sr-only">日志关键词</span><input id="searchInput" type="search" placeholder="日志关键词"></label>
+                <label class="search-wrap"><span class="sr-only">事件关键词</span><input id="searchInput" type="search" placeholder="事件关键词"></label>
                 <span id="resultCount" class="count-label">0 条</span></div>
               <div class="advanced-filters"><div class="sort-control" role="group" aria-label="时间排序"><button id="sortNewest" class="sort-option active" type="button" aria-pressed="true">最新在前</button><button id="sortOldest" class="sort-option" type="button" aria-pressed="false">最早在前</button></div>
-                <button id="resetFilters" class="subtle" type="button">清除筛选</button><button id="clearLogs" class="subtle clear-logs" type="button">清除所有事件日志</button></div>
+                <button id="resetFilters" class="subtle" type="button">清除筛选</button><button id="clearLogs" class="subtle clear-logs" type="button">清除当前会话事件</button></div>
             </div>
             <div class="event-layout">
-              <div class="event-table-wrap"><table><thead><tr><th>时间</th><th>事件 / 日志</th><th>状态</th></tr></thead><tbody id="eventRows"></tbody></table><div id="eventEmpty" class="empty">选择会话或开始采集后，日志会显示在这里。</div></div>
+              <div class="event-table-wrap"><table><thead><tr><th>时间</th><th>事件</th><th>状态</th></tr></thead><tbody id="eventRows"></tbody></table><div id="eventEmpty" class="empty">选择会话或开始采集后，埋点事件会显示在这里。</div></div>
               <div id="detailResize" class="resize-handle" role="separator" tabindex="0" aria-label="调整详情栏宽度" aria-orientation="vertical"></div>
               <aside class="detail"><div class="pane-heading"><h2>详情</h2><span id="detailTime"></span></div>
                 <div class="detail-filters"><label><span>属性名</span><input id="fieldInput" class="filter-input" aria-label="属性名，支持模糊匹配，多个用斜杠分隔" title="支持模糊匹配，多个用 / 分隔" placeholder="beat_guide/sing"></label><label><span>属性值</span><input id="valueInput" class="filter-input" aria-label="属性值包含" placeholder="输入属性值"></label></div>

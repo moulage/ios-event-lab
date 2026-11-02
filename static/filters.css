@@ -12,5 +12,6 @@
 .selected-properties .properties dt,.selected-properties .properties dd{border-bottom-color:#d1e9dc}
 .selected-properties .properties dd{color:#174f3d}
 .selected-properties .properties dd.missing{color:#8d6c53;font-weight:500}
+.missing-property-fields{margin:10px 0 2px;color:#915b37;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
 .remaining-title{margin-top:22px!important}
 @media(max-width:650px){.primary-filters .event-wrap{flex:1 1 100%}.primary-filters .search-wrap{flex:1;min-width:145px}.filter-input{flex:1;min-width:145px}.view-heading .export-actions{flex-wrap:wrap;justify-content:flex-end}}
