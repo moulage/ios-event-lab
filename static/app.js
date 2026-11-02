@@ -1,4 +1,4 @@
-const state = { sessionId: Number(localStorage.getItem('iosEventSession') || 0), tab: 'events', rows: [], selectedId: 0, busy: false, order: 'desc' };
+const state = { sessionId: Number(localStorage.getItem('iosEventSession') || 0), tab: 'events', rows: [], selectedId: 0, busy: false, order: 'desc', noticeSource: '' };
 const $ = (id) => document.getElementById(id);
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 
@@ -8,11 +8,18 @@ async function api(path, options = {}) {
   if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
   return data;
 }
-function message(text, isError = false) {
+function message(text, isError = false, source = 'action') {
   const box = $('notice');
   box.textContent = text;
   box.classList.toggle('error', isError);
   box.hidden = !text;
+  state.noticeSource = text ? source : '';
+}
+function updateSessionNotice(current) {
+  const error = current?.error || (current && !['running', 'cleared'].includes(current.status) && current.event_count === 0
+    ? '此会话未识别到埋点标记，请确认 debug 包日志输出及采集设备。' : '');
+  if (error) message(error, true, 'session');
+  else if (state.noticeSource === 'session') message('');
 }
 function when(value) {
   if (!value) return '—';
@@ -75,9 +82,7 @@ async function refreshSessions() {
   const current = data.sessions.find((item) => item.id === state.sessionId);
   $('currentSession').textContent = current?.name || '尚未选择';
   $('eventCount').textContent = (current?.event_count || 0).toLocaleString('zh-CN');
-  if (current?.error) message(current.error, true);
-  else if (current && !['running', 'cleared'].includes(current.status) && current.event_count === 0)
-    message('此会话未识别到埋点标记，请确认 debug 包日志输出及采集设备。', true);
+  updateSessionNotice(current);
   const capture = await api('/api/capture');
   $('startBtn').hidden = capture.running || capture.passive;
   $('stopBtn').hidden = !capture.running || capture.passive;
@@ -181,6 +186,7 @@ async function refreshAnalysis() {
 async function selectSession(id) {
   state.sessionId = id;
   state.selectedId = 0;
+  if (state.noticeSource === 'session') message('');
   localStorage.setItem('iosEventSession', String(id));
   await refreshAll();
 }
